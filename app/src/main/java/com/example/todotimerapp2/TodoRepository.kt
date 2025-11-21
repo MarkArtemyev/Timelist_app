@@ -73,4 +73,15 @@ class TodoRepository(private val context: Context) {
             e.copy(dayOfWeek = newDay, position = newPos, updatedAt = System.currentTimeMillis())
         )
     }
+    suspend fun update(id: Long, title: String, note: String) {
+        if (title.isBlank()) return
+        val e = dao.getById(id) ?: return
+
+        val updated = e.copy(
+            title = title.trim(),
+            note = note.trim(),
+            updatedAt = System.currentTimeMillis()
+        )
+        dao.update(updated)
+    }
 }

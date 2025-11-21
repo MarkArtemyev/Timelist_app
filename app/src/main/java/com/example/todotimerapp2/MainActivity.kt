@@ -17,42 +17,79 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import com.example.todotimerapp2.data.TodoEntity
 import com.example.todotimerapp2.ui.rememberRemainingText
-import kotlin.math.roundToInt
 
+// ---- Activity / App shell ----
 
 class MainActivity : ComponentActivity() {
+
     private val vm: TodoViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,32 +97,48 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         setContent {
-            val askNotifPermission = rememberLauncherForActivityResult(
-                ActivityResultContracts.RequestPermission()
-            ) { /* ignore */ }
-
-            LaunchedEffect(Unit) {
-                if (Build.VERSION.SDK_INT >= 33) {
-                    askNotifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-            }
-
-            MaterialTheme(
-                colorScheme = dynamicDarkColorScheme()
-            ) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    TodoScreen(vm)
-                }
-            }
+            TodoApp(vm = vm)
         }
     }
 }
 
 @Composable
-private fun dynamicDarkColorScheme() = darkColorScheme(
+private fun TodoApp(vm: TodoViewModel) {
+    val context = LocalContext.current
+
+    val askNotifPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        // ничего не делаем
+    }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            askNotifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    val colorScheme = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            null
+        } else {
+            appFallbackDarkScheme
+        }
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme ?: dynamicDarkColorScheme(context)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            TodoScreen(vm = vm)
+        }
+    }
+}
+
+private val appFallbackDarkScheme = darkColorScheme(
     primary = Color(0xFF90CAF9),
     secondary = Color(0xFFCE93D8),
     tertiary = Color(0xFFA5D6A7),
@@ -95,100 +148,81 @@ private fun dynamicDarkColorScheme() = darkColorScheme(
     error = Color(0xFFCF6679)
 )
 
-private val DayLabels = listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+private val DAY_LABELS = listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+
+// ---- Drag-state holder ----
+
+private class TodoDragState {
+    val tabAreas = mutableStateMapOf<Int, Rect>()
+    var draggingId by mutableStateOf<Long?>(null)
+    var dragOffset by mutableStateOf(Offset.Zero)
+    var hoveredTabId by mutableStateOf<Int?>(null)
+
+    fun reset() {
+        draggingId = null
+        dragOffset = Offset.Zero
+        hoveredTabId = null
+    }
+}
+
+// ---- Screen ----
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun TodoScreen(vm: TodoViewModel) {
+fun TodoScreen(
+    vm: TodoViewModel,
+    modifier: Modifier = Modifier
+) {
     val todosFromVm by vm.state.collectAsState()
     val selectedDay by vm.selectedDay.collectAsState()
+
     val focusManager = LocalFocusManager.current
     val haptic = LocalHapticFeedback.current
 
-    var list by remember(todosFromVm) { mutableStateOf(todosFromVm) }
-    val tabAreas = remember { mutableStateMapOf<Int, Rect>() }
-    var hoveredTab by remember { mutableStateOf<Int?>(null) }
-    var draggingId by remember { mutableStateOf<Long?>(null) }
-    var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    var localListOverride by remember { mutableStateOf<List<TodoEntity>?>(null) }
+    val listToShow = localListOverride ?: todosFromVm
+
+    val dragState = remember { TodoDragState() }
+
+    val completedCount = listToShow.count { it.isDone }
+    val totalCount = listToShow.size
+    val hasActiveTasks = listToShow.any { !it.isDone }
+
+    // --- ВОЗВРАЩЕНО: Стейты для добавления и редактирования ---
     var newTitle by remember { mutableStateOf("") }
+    var newNote by remember { mutableStateOf("") }
+    var taskToEdit by remember { mutableStateOf<TodoEntity?>(null) }
+    // ---
+
     var expandedAddTask by remember { mutableStateOf(false) }
 
-    // Статистика для текущего дня
-    val completedCount = list.count { it.isDone }
-    val totalCount = list.size
-    val hasActiveTasks = list.any { !it.isDone }
+    // --- ВОЗВРАЩЕНО: Диалог редактирования ---
+    if (taskToEdit != null) {
+        EditTaskDialog(
+            task = taskToEdit!!,
+            onDismiss = { taskToEdit = null },
+            onConfirm = { id, title, note ->
+                vm.update(id, title, note)
+                taskToEdit = null
+            }
+        )
+    }
+    // ---
 
     Scaffold(
+        modifier = modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets.systemBars,
         topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("Todo + Таймер", fontWeight = FontWeight.Bold)
-                            if (totalCount > 0) {
-                                Text(
-                                    "$completedCount из $totalCount завершено",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    )
-                )
-
-                PrimaryTabRow(
-                    selectedTabIndex = selectedDay - 1,
-                    containerColor = MaterialTheme.colorScheme.surface
-                ) {
-                    DayLabels.forEachIndexed { idx, label ->
-                        val day = idx + 1
-                        val isSelected = day == selectedDay
-                        val isHover = hoveredTab == day && draggingId != null
-
-                        val tabColor by animateColorAsState(
-                            targetValue = when {
-                                isHover -> MaterialTheme.colorScheme.primary
-                                isSelected -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            animationSpec = tween(200)
-                        )
-
-                        Tab(
-                            selected = isSelected,
-                            onClick = {
-                                vm.setDay(day)
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            },
-                            text = {
-                                Text(
-                                    label,
-                                    color = tabColor,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                )
-                            },
-                            modifier = Modifier.onGloballyPositioned { coords ->
-                                val p = coords.positionInRoot()
-                                val s = coords.size
-                                tabAreas[day] = Rect(p.x, p.y, p.x + s.width, p.y + s.height)
-                            }
-                        )
-                    }
+            TodoTopBar(
+                selectedDay = selectedDay,
+                completedCount = completedCount,
+                totalCount = totalCount,
+                dragState = dragState,
+                onDaySelected = { day ->
+                    vm.setDay(day)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 }
-
-                // Прогресс бар
-                if (totalCount > 0) {
-                    LinearProgressIndicator(
-                        progress = completedCount.toFloat() / totalCount,
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                }
-            }
+            )
         },
         floatingActionButton = {
             FloatingActionButton(
@@ -202,108 +236,247 @@ fun TodoScreen(vm: TodoViewModel) {
                 )
             }
         }
-    ) { padding ->
+    ) { paddingValues ->
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .padding(paddingValues)
         ) {
-            // Поле добавления задачи
             AnimatedVisibility(
                 visible = expandedAddTask,
                 enter = fadeIn() + scaleIn(),
                 exit = fadeOut() + scaleOut()
             ) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp)
-                            .imePadding(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = newTitle,
-                            onValueChange = { newTitle = it },
-                            placeholder = { Text("Новая задача…") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                            colors = TextFieldDefaults.colors(
-                                unfocusedContainerColor = Color.Transparent,
-                                focusedContainerColor = Color.Transparent
-                            )
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        IconButton(
-                            onClick = {
-                                val text = newTitle.trim()
-                                if (text.isNotEmpty()) {
-                                    vm.add(text)
-                                    newTitle = ""
-                                    expandedAddTask = false
-                                    focusManager.clearFocus()
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                }
-                            },
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            ),
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Default.Send, "Добавить")
+                // --- ИЗМЕНЕНО: Вызов `NewTaskForm` ---
+                NewTaskForm(
+                    title = newTitle,
+                    onTitleChange = { newTitle = it },
+                    note = newNote,
+                    onNoteChange = { newNote = it },
+                    onSubmit = {
+                        val title = newTitle.trim()
+                        val note = newNote.trim()
+                        if (title.isNotEmpty()) {
+                            vm.add(title, note) // Передаем оба поля
+                            newTitle = ""
+                            newNote = ""
+                            expandedAddTask = false
+                            focusManager.clearFocus()
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
                     }
-                }
+                )
+                // ---
             }
 
-            // Список задач
-            if (list.isEmpty()) {
-                EmptyStateView(hasActiveTasks)
+            if (listToShow.isEmpty()) {
+                EmptyStateView(hasActiveTasks = hasActiveTasks)
             } else {
                 TodoList(
-                    list = list,
-                    draggingId = draggingId,
-                    dragOffset = dragOffset,
-                    tabAreas = tabAreas,
+                    list = listToShow,
+                    draggingId = dragState.draggingId,
+                    dragOffset = dragState.dragOffset,
+                    tabAreas = dragState.tabAreas,
                     vm = vm,
                     haptic = haptic,
-                    onListUpdate = { list = it },
+                    onListUpdate = { updated ->
+                        localListOverride = updated
+                    },
                     onDragStart = { id, offset ->
-                        draggingId = id
-                        dragOffset = offset
+                        localListOverride = todosFromVm
+                        dragState.draggingId = id
+                        dragState.dragOffset = offset
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     },
+                    onDrag = { offset ->
+                        dragState.dragOffset = offset
+                    },
                     onDragEnd = { todo ->
-                        val dropDay = tabAreas.entries
-                            .firstOrNull { it.value.contains(dragOffset) }
+                        val dropDay = dragState.tabAreas.entries
+                            .firstOrNull { (_, rect) -> rect.contains(dragState.dragOffset) }
                             ?.key
+
                         if (dropDay != null) {
                             vm.dropToDay(todo.id, dropDay)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         } else {
-                            vm.commitReorder(list)
+                            localListOverride?.let { vm.commitReorder(it) }
                         }
-                        draggingId = null
-                        hoveredTab = null
+
+                        dragState.reset()
+                        localListOverride = null
                     },
                     onDragCancel = {
-                        draggingId = null
-                        hoveredTab = null
+                        dragState.reset()
+                        localListOverride = null
                     },
-                    onHoverTab = { hoveredTab = it }
+                    onHoverTab = { dayOrNull ->
+                        dragState.hoveredTabId = dayOrNull
+                    },
+                    // --- ВОЗВРАЩЕНО: Передача клика ---
+                    onItemClick = { task ->
+                        if (dragState.draggingId == null) {
+                            taskToEdit = task
+                        }
+                    }
+                    // ---
                 )
             }
         }
     }
 }
+
+// ---- Top bar + add card ----
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TodoTopBar(
+    selectedDay: Int,
+    completedCount: Int,
+    totalCount: Int,
+    dragState: TodoDragState,
+    onDaySelected: (Int) -> Unit
+) {
+    Column {
+        TopAppBar(
+            title = {
+                Column {
+                    if (totalCount > 0) {
+                        Text(
+                            "$completedCount из $totalCount завершено",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        )
+
+        PrimaryTabRow(
+            selectedTabIndex = selectedDay - 1,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            val hoveringTabId = dragState.hoveredTabId
+            val currentDraggingId = dragState.draggingId
+
+            DAY_LABELS.forEachIndexed { index, label ->
+                val day = index + 1
+                val isSelected = day == selectedDay
+                val isHover = hoveringTabId == day && currentDraggingId != null
+
+                val tabColor by animateColorAsState(
+                    targetValue = when {
+                        isHover -> MaterialTheme.colorScheme.primary
+                        isSelected -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    animationSpec = tween(160),
+                    label = "TabColorAnim"
+                )
+
+                Tab(
+                    selected = isSelected,
+                    onClick = { onDaySelected(day) },
+                    text = {
+                        Text(
+                            text = label,
+                            color = tabColor,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        val position = coords.positionInRoot()
+                        val size = coords.size
+                        dragState.tabAreas[day] = Rect(
+                            left = position.x,
+                            top = position.y,
+                            right = position.x + size.width,
+                            bottom = position.y + size.height
+                        )
+                    }
+                )
+            }
+        }
+
+        if (totalCount > 0) {
+            LinearProgressIndicator(
+                progress = completedCount.toFloat() / totalCount,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp),
+                color = MaterialTheme.colorScheme.tertiary
+            )
+        }
+    }
+}
+
+@Composable
+private fun NewTaskForm(
+    title: String,
+    onTitleChange: (String) -> Unit,
+    note: String,
+    onNoteChange: (String) -> Unit,
+    onSubmit: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .imePadding(),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    placeholder = { Text("Новая задача…") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    colors = TextFieldDefaults.colors(
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedContainerColor = Color.Transparent
+                    )
+                )
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = onSubmit,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = "Добавить")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = note,
+                onValueChange = onNoteChange,
+                placeholder = { Text("Описание (необязательно)...") },
+                modifier = Modifier.fillMaxWidth(),
+                colors = TextFieldDefaults.colors(
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedContainerColor = Color.Transparent
+                ),
+                maxLines = 3
+            )
+        }
+    }
+}
+
+// ---- Empty state ----
 
 @Composable
 private fun EmptyStateView(hasActiveTasks: Boolean) {
@@ -335,6 +508,8 @@ private fun EmptyStateView(hasActiveTasks: Boolean) {
     }
 }
 
+// ---- List + item ----
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TodoList(
@@ -346,32 +521,49 @@ private fun TodoList(
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     onListUpdate: (List<TodoEntity>) -> Unit,
     onDragStart: (Long, Offset) -> Unit,
+    onDrag: (Offset) -> Unit,
     onDragEnd: (TodoEntity) -> Unit,
     onDragCancel: () -> Unit,
-    onHoverTab: (Int?) -> Unit
+    onHoverTab: (Int?) -> Unit,
+    onItemClick: (TodoEntity) -> Unit // --- ВОЗВРАЩЕНО ---
 ) {
     data class Bounds(val l: Float, val t: Float, val r: Float, val b: Float)
+
     val itemBounds = remember { mutableStateMapOf<Long, Bounds>() }
 
-    fun indexOf(id: Long) = list.indexOfFirst { it.id == id }
+    val currentList by rememberUpdatedState(list)
+    val currentOnListUpdate by rememberUpdatedState(onListUpdate)
+    val currentDragOffset by rememberUpdatedState(dragOffset)
+    val currentDraggingId by rememberUpdatedState(draggingId)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnHoverTab by rememberUpdatedState(onHoverTab)
+    val currentOnItemClick by rememberUpdatedState(onItemClick) // --- ВОЗВРАЩЕНО ---
+
+    fun indexOf(id: Long) = currentList.indexOfFirst { it.id == id }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        itemsIndexed(list, key = { _, it -> it.id }) { _, todo ->
-            val isDragging = draggingId == todo.id
-
+        itemsIndexed(
+            items = currentList,
+            key = { _, todo -> todo.id }
+        ) { _, todo ->
+            val isDragging = currentDraggingId == todo.id
             val bounds = itemBounds[todo.id]
+
             val yOffset = if (isDragging && bounds != null) {
                 val centerOfItem = (bounds.t + bounds.b) / 2f
-                (dragOffset.y - centerOfItem).roundToInt()
-            } else 0
+                currentDragOffset.y - centerOfItem
+            } else {
+                0f
+            }
 
             val elevation by animateDpAsState(
                 targetValue = if (isDragging) 8.dp else 2.dp,
-                animationSpec = tween(200)
+                animationSpec = tween(160),
+                label = "ItemElevation"
             )
 
             TodoItemRow(
@@ -381,62 +573,88 @@ private fun TodoList(
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 },
                 onDelete = { vm.delete(todo) },
-                onStartTimer = { m -> vm.startTimer(todo, m) },
+                onStartTimer = { minutes -> vm.startTimer(todo, minutes) },
                 onStopTimer = { vm.stopTimer(todo) },
+                onClick = { currentOnItemClick(todo) }, // --- ВОЗВРАЩЕНО ---
+                dragging = isDragging,
                 modifier = Modifier
-                    .offset { IntOffset(0, yOffset) }
+                    .graphicsLayer {
+                        translationY = yOffset
+                    }
+                    .zIndex(if (isDragging) 1f else 0f)
                     .shadow(elevation, MaterialTheme.shapes.medium)
                     .animateItemPlacement()
-                    .onGloballyPositioned { layout ->
-                        val p = layout.positionInRoot()
-                        val s = layout.size
-                        itemBounds[todo.id] = Bounds(p.x, p.y, p.x + s.width, p.y + s.height)
+                    .onGloballyPositioned { layoutCoordinates ->
+                        val position = layoutCoordinates.positionInRoot()
+                        val size = layoutCoordinates.size
+                        itemBounds[todo.id] = Bounds(
+                            l = position.x,
+                            t = position.y,
+                            r = position.x + size.width,
+                            b = position.y + size.height
+                        )
                     }
-                    .pointerInput(list, tabAreas) {
+                    .pointerInput(tabAreas, itemBounds) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
-                                val b = itemBounds[todo.id] ?: return@detectDragGesturesAfterLongPress
-                                onDragStart(todo.id, Offset((b.l + b.r) / 2f, (b.t + b.b) / 2f))
+                                val b = itemBounds[todo.id]
+                                    ?: return@detectDragGesturesAfterLongPress
+                                val center = Offset(
+                                    x = (b.l + b.r) / 2f,
+                                    y = (b.t + b.b) / 2f
+                                )
+                                onDragStart(todo.id, center)
                             },
                             onDragEnd = { onDragEnd(todo) },
                             onDragCancel = onDragCancel
-                        ) { change, drag ->
+                        ) { change, dragAmount ->
                             change.consume()
-                            if (draggingId != todo.id) return@detectDragGesturesAfterLongPress
 
-                            val newOffset = dragOffset + drag
-                            onDragStart(todo.id, newOffset)
+                            if (currentDraggingId != todo.id) return@detectDragGesturesAfterLongPress
 
-                            onHoverTab(tabAreas.entries.firstOrNull { it.value.contains(newOffset) }?.key)
+                            val newOffset = currentDragOffset + dragAmount
+                            currentOnDrag(newOffset)
 
-                            val myIdx = indexOf(todo.id)
+                            val hovered = tabAreas.entries
+                                .firstOrNull { (_, rect) -> rect.contains(newOffset) }
+                                ?.key
+                            currentOnHoverTab(hovered)
+
+                            val myIndex = indexOf(todo.id)
+                            if (myIndex == -1) return@detectDragGesturesAfterLongPress
+
                             val myCenterY = newOffset.y
 
-                            if (myIdx > 0) {
-                                val prev = list[myIdx - 1]
-                                val pb = itemBounds[prev.id] ?: return@detectDragGesturesAfterLongPress
-                                if (myCenterY < (pb.t + pb.b) / 2f) {
-                                    val m = list.toMutableList()
-                                    m.removeAt(myIdx)
-                                    m.add(myIdx - 1, todo)
-                                    onListUpdate(m)
-                                    return@detectDragGesturesAfterLongPress
+                            if (myIndex > 0) {
+                                val prev = currentList[myIndex - 1]
+                                val prevBounds = itemBounds[prev.id]
+                                if (prevBounds != null) {
+                                    val prevCenterY = (prevBounds.t + prevBounds.b) / 2f
+                                    if (myCenterY < prevCenterY) {
+                                        val mutable = currentList.toMutableList()
+                                        mutable.removeAt(myIndex)
+                                        mutable.add(myIndex - 1, todo)
+                                        currentOnListUpdate(mutable)
+                                        return@detectDragGesturesAfterLongPress
+                                    }
                                 }
                             }
-                            if (myIdx < list.lastIndex) {
-                                val next = list[myIdx + 1]
-                                val nb = itemBounds[next.id] ?: return@detectDragGesturesAfterLongPress
-                                if (myCenterY > (nb.t + nb.b) / 2f) {
-                                    val m = list.toMutableList()
-                                    m.removeAt(myIdx)
-                                    m.add(myIdx + 1, todo)
-                                    onListUpdate(m)
-                                    return@detectDragGesturesAfterLongPress
+
+                            if (myIndex < currentList.lastIndex) {
+                                val next = currentList[myIndex + 1]
+                                val nextBounds = itemBounds[next.id]
+                                if (nextBounds != null) {
+                                    val nextCenterY = (nextBounds.t + nextBounds.b) / 2f
+                                    if (myCenterY > nextCenterY) {
+                                        val mutable = currentList.toMutableList()
+                                        mutable.removeAt(myIndex)
+                                        mutable.add(myIndex + 1, todo)
+                                        currentOnListUpdate(mutable)
+                                    }
                                 }
                             }
                         }
-                    },
-                dragging = isDragging
+                    }
             )
         }
     }
@@ -449,6 +667,7 @@ private fun TodoItemRow(
     onDelete: () -> Unit,
     onStartTimer: (Long) -> Unit,
     onStopTimer: () -> Unit,
+    onClick: () -> Unit, // --- ВОЗВРАЩЕНО ---
     modifier: Modifier = Modifier,
     dragging: Boolean = false
 ) {
@@ -462,14 +681,21 @@ private fun TodoItemRow(
             todo.isDone -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             else -> MaterialTheme.colorScheme.surfaceVariant
         },
-        animationSpec = tween(200)
+        animationSpec = tween(160),
+        label = "ItemContainerColor"
     )
 
     val isTimerActive = todo.endTimeMillis != null
     val isOverdue = isTimerActive && timeLeft.contains("-")
 
     Card(
-        modifier = modifier.fillMaxWidth(),
+        // --- ВОЗВРАЩЕНО: `clickable` ---
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(
+                enabled = !dragging,
+                onClick = onClick
+            ),
         colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
         Column(
@@ -481,7 +707,7 @@ private fun TodoItemRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Checkbox(
+                androidx.compose.material3.Checkbox(
                     checked = todo.isDone,
                     onCheckedChange = { onToggle() }
                 )
@@ -495,24 +721,27 @@ private fun TodoItemRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    // --- ВОЗВРАЩЕНО: Отображение `note` ---
                     if (todo.note.isNotBlank()) {
                         Text(
                             text = todo.note,
                             style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.alpha(0.7f),
-                            maxLines = 1,
+                            modifier = Modifier.alpha(if (todo.isDone) 0.5f else 0.7f),
+                            maxLines = 3,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    // ---
                 }
 
                 if (isTimerActive) {
                     Surface(
                         shape = CircleShape,
-                        color = if (isOverdue)
+                        color = if (isOverdue) {
                             MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.tertiaryContainer,
+                        } else {
+                            MaterialTheme.colorScheme.tertiaryContainer
+                        },
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
                         Text(
@@ -520,10 +749,11 @@ private fun TodoItemRow(
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            color = if (isOverdue)
+                            color = if (isOverdue) {
                                 MaterialTheme.colorScheme.onError
-                            else
+                            } else {
                                 MaterialTheme.colorScheme.onTertiaryContainer
+                            }
                         )
                     }
                 }
@@ -538,7 +768,7 @@ private fun TodoItemRow(
                         onClick = { showTimerDialog = true },
                         modifier = Modifier.height(36.dp)
                     ) {
-                        Icon(Icons.Default.Timer, null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Таймер", style = MaterialTheme.typography.labelMedium)
                     }
@@ -550,7 +780,7 @@ private fun TodoItemRow(
                             containerColor = MaterialTheme.colorScheme.error
                         )
                     ) {
-                        Icon(Icons.Default.Stop, null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Стоп", style = MaterialTheme.typography.labelMedium)
                     }
@@ -585,7 +815,7 @@ private fun TodoItemRow(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            icon = { Icon(Icons.Default.Warning, null) },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null) },
             title = { Text("Удалить задачу?") },
             text = { Text("Это действие нельзя отменить") },
             confirmButton = {
@@ -610,6 +840,8 @@ private fun TodoItemRow(
     }
 }
 
+// ---- Timer dialog ----
+
 @Composable
 private fun SetTimerDialog(
     onDismiss: () -> Unit,
@@ -620,13 +852,15 @@ private fun SetTimerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Timer, null) },
+        icon = { Icon(Icons.Default.Timer, contentDescription = null) },
         title = { Text("Установить таймер") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = minutesText,
-                    onValueChange = { minutesText = it.filter { ch -> ch.isDigit() }.take(4) },
+                    onValueChange = { raw ->
+                        minutesText = raw.filter { ch -> ch.isDigit() }.take(4)
+                    },
                     label = { Text("Минуты") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -661,6 +895,62 @@ private fun SetTimerDialog(
                 }
             ) {
                 Text("Старт")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
+    )
+}
+
+// --- НОВАЯ ФУНКЦИЯ: Диалог редактирования ---
+@Composable
+private fun EditTaskDialog(
+    task: TodoEntity,
+    onDismiss: () -> Unit,
+    onConfirm: (id: Long, title: String, note: String) -> Unit
+) {
+    var title by remember(task) { mutableStateOf(task.title) }
+    var note by remember(task) { mutableStateOf(task.note) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Edit, null) },
+        title = { Text("Редактировать задачу") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Задача") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Описание") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 8
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (title.isNotBlank()) {
+                        onConfirm(task.id, title.trim(), note.trim())
+                    }
+                },
+                enabled = title.isNotBlank()
+            ) {
+                Text("Сохранить")
             }
         },
         dismissButton = {
